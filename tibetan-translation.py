@@ -7,9 +7,14 @@ from typing import List, Dict, Tuple
 import logging
 import os
 from datetime import datetime
+import pyewts
+
+EWTS = pyewts.pyewts()
 
 # Configuration
-MAX_TITLES = 10  # Default limit for number of titles to process
+MAX_TITLES = 20  # Default limit for number of titles to process
+DEBUG=True
+CONVERT_TO_UNICODE=False
 
 class TibetanTranslator:
     def __init__(self, api_key_file: str, batch_size: int = 10):
@@ -41,7 +46,7 @@ class TibetanTranslator:
     def create_prompt(self, title_data: List[Dict]) -> str:
         """Create a detailed prompt for translation and analysis"""
         titles = [item['title'] for item in title_data]
-        return f"""For each of the following Tibetan titles, please provide:
+        res = f"""For each of the following Tibetan titles, please provide:
         1. Spelling correction of the Tibetan text if needed
         2. Linguistic analysis including:
            - Syntactic structure (identify the main noun phrases, verb phrases, and their relationships)
@@ -49,8 +54,9 @@ class TibetanTranslator:
            - Any grammatical particles and their function
         3. English translation based on this analysis
         
-        Please format the response as a JSON object with the following structure for each title:
-        {{
+        Please format the response as a JSON array with the following structure for each title:
+        [
+          {{
             "original": "original Tibetan text",
             "corrected": "corrected Tibetan text (if different from original)",
             "analysis": {{
@@ -59,10 +65,13 @@ class TibetanTranslator:
                 "particles": "particle analysis"
             }},
             "translation": "English translation"
-        }}
+          }}
+        ]
         
-        Tibetan titles to analyze:
+        Please have your response be pure JSON, no comment or question, and do all the following {self.batch_size} titles (given below in a JSON array, in Wylie transliteration):
         {json.dumps(titles, ensure_ascii=False, indent=2)}"""
+        print(res)
+        return res
 
     def process_batch(self, title_data: List[Dict]) -> List[Dict]:
         """Process a batch of titles and return detailed analysis"""
@@ -82,17 +91,20 @@ class TibetanTranslator:
             
             # Extract JSON from response
             response_text = message.content[0].text
+            print(response_text)
             try:
                 analyses = json.loads(response_text)
                 # Add book IDs to the analyses
-                for analysis, data in zip(analyses, title_data):
-                    analysis['book_id'] = data['id']
+                for i, analysis in enumerate(analyses):
+                    analysis['book_id'] = title_data[i]['id']
                 return analyses
             except json.JSONDecodeError:
                 logging.error(f"Failed to parse JSON from response: {response_text}")
                 return [{'book_id': data['id']} for data in title_data]
                 
         except Exception as e:
+            if DEBUG:
+                raise
             logging.error(f"Error processing batch: {str(e)}")
             return [{'book_id': data['id']} for data in title_data]
 
@@ -106,7 +118,7 @@ class TibetanTranslator:
         
         # Prepare data with IDs
         title_data = [
-            {'id': row['book_id'], 'title': row['tibetan_title']} 
+            {'id': row['book_id'], 'title': EWTS.toUnicode(row['tibetan_title']) if CONVERT_TO_UNICODE else row['tibetan_title']} 
             for _, row in df.iterrows()
         ]
         
@@ -213,5 +225,7 @@ if __name__ == "__main__":
         # )
         
     except Exception as e:
+        if DEBUG:
+            raise
         logging.error(f"Error in main execution: {str(e)}")
         print(f"Error: {str(e)}")
